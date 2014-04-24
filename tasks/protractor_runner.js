@@ -26,6 +26,7 @@ module.exports = function(grunt) {
     var opts = this.options({
       configFile: protractorRefConfPath,
       keepAlive: true,
+      tryTwice: false,
       noColor: false,
       debug: false,
       args: {}
@@ -39,10 +40,12 @@ module.exports = function(grunt) {
     grunt.verbose.writeln("Options: " + util.inspect(opts));
 
     var keepAlive = opts['keepAlive'];
+    var tryTwice = opts['tryTwice'];
     var strArgs = ["seleniumAddress", "seleniumServerJar", "seleniumPort", "baseUrl", "rootElement", "browser", "chromeDriver", "chromeOnly", "sauceUser", "sauceKey", "framework"];
     var listArgs = ["specs"];
     var boolArgs = ["includeStackTrace", "verbose"];
     var objectArgs = ["params", "capabilities", "cucumberOpts"];
+    var secondAttempt = false;
 
     var args = [protractorBinPath, opts.configFile];
     if (opts.noColor){
@@ -98,36 +101,44 @@ module.exports = function(grunt) {
       })("--" + a, opts.args[a], args);
     });
 
+    function runTests () {
+      grunt.util.spawn({
+          cmd: 'node',
+          args: args,
+          opts: {
+            stdio:'inherit'
+          }
+        },
+        function(error, result, code) {
+          if (error) {
+            grunt.log.error(String(result));
+            if (tryTwice && !secondAttempt) {
+              //Try second time if the tests failed
+              secondAttempt = true;
+              runTests();
+            } else if(code === 1 && keepAlive) {
+              // Test fails but do not want to stop the grunt process.
+              grunt.log.oklns("Test failed but keep the grunt process alive.");
+              done();
+              done = null;
+            } else {
+              // Test fails and want to stop the grunt process,
+              // or protractor exited with other reason.
+              grunt.fail.fatal('protractor exited with code: '+code, 3);
+            }
+          } else {
+            done();
+            done = null;
+          }
+        }
+      );
+    }
+
     grunt.verbose.writeln("Spawn node with arguments: " + args.join(" "));
 
     // Spawn protractor command
     var done = this.async();
-    grunt.util.spawn({
-        cmd: 'node',
-        args: args,
-        opts: {
-          stdio:'inherit'
-        }
-      },
-      function(error, result, code) {
-        if (error) {
-          grunt.log.error(String(result));
-          if(code === 1 && keepAlive) {
-            // Test fails but do not want to stop the grunt process.
-            grunt.log.oklns("Test failed but keep the grunt process alive.");
-            done();
-            done = null;
-          } else {
-            // Test fails and want to stop the grunt process,
-            // or protractor exited with other reason.
-            grunt.fail.fatal('protractor exited with code: '+code, 3);
-          }
-        } else {
-          done();
-          done = null;
-        }
-      }
-    );
+    runTests();
   });
 
 };
